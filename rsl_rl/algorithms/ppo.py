@@ -30,6 +30,7 @@ class PPO:
         schedule="fixed",
         desired_kl=0.01,
         device="cpu",
+        low_pass_alpha=0.5  # Add alpha for the low-pass filter
     ):
         self.device = device
 
@@ -55,6 +56,10 @@ class PPO:
         self.max_grad_norm = max_grad_norm
         self.use_clipped_value_loss = use_clipped_value_loss
 
+        # Low-pass filter parameters
+        self.low_pass_alpha = low_pass_alpha
+        self.previous_action = None
+
     def init_storage(self, num_envs, num_transitions_per_env, actor_obs_shape, critic_obs_shape, action_shape):
         self.storage = RolloutStorage(
             num_envs, num_transitions_per_env, actor_obs_shape, critic_obs_shape, action_shape, self.device
@@ -70,7 +75,15 @@ class PPO:
         if self.actor_critic.is_recurrent:
             self.transition.hidden_states = self.actor_critic.get_hidden_states()
         # Compute the actions and values
-        self.transition.actions = self.actor_critic.act(obs).detach()
+        current_action = self.actor_critic.act(obs).detach()
+        
+        # Apply low-pass filter
+        if self.previous_action is None:
+            filtered_action = current_action
+        else:
+            filtered_action = self.low_pass_alpha * current_action + (1 - self.low_pass_alpha) * self.previous_action
+        self.previous_action = filtered_action
+        self.transition.actions = filtered_action
         self.transition.values = self.actor_critic.evaluate(critic_obs).detach()
         self.transition.actions_log_prob = self.actor_critic.get_actions_log_prob(self.transition.actions).detach()
         self.transition.action_mean = self.actor_critic.action_mean.detach()
